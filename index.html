@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduFlow Pro - Smart Student Organizer</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, setDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'eduflow-prod-v1';
+
+        // Global State & Functions
+        window.appData = {
+            tasks: [],
+            schedules: [],
+            user: null
+        };
+
+        // Initialize Auth (Rule 3)
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth failed:", error);
+            }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            window.appData.user = user;
+            if (user) {
+                setupListeners(user.uid);
+            }
+        });
+
+        // Firestore Listeners (Rule 1 & 2)
+        function setupListeners(uid) {
+            const tasksRef = collection(db, 'artifacts', appId, 'users', uid, 'tasks');
+            const schedRef = collection(db, 'artifacts', appId, 'users', uid, 'schedules');
+
+            // Listen Tasks
+            onSnapshot(tasksRef, (snapshot) => {
+                window.appData.tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderAll();
+            }, (err) => console.error("Tasks listener error:", err));
+
+            // Listen Schedules
+            onSnapshot(schedRef, (snapshot) => {
+                window.appData.schedules = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderAll();
+            }, (err) => console.error("Schedule listener error:", err));
+        }
+
+        // Exposed CRUD functions
+        window.addTask = async (task) => {
+            if (!window.appData.user) return;
+            const ref = collection(db, 'artifacts', appId, 'users', window.appData.user.uid, 'tasks');
+            await addDoc(ref, task);
+        };
+
+        window.toggleTask = async (id, currentStatus) => {
+            if (!window.appData.user) return;
+            const ref = doc(db, 'artifacts', appId, 'users', window.appData.user.uid, 'tasks', id);
+            await updateDoc(ref, { done: !currentStatus });
+        };
+
+        window.deleteTask = async (id) => {
+            if (!window.appData.user) return;
+            const ref = doc(db, 'artifacts', appId, 'users', window.appData.user.uid, 'tasks', id);
+            await deleteDoc(ref);
+        };
+
+        window.addSchedule = async (sched) => {
+            if (!window.appData.user) return;
+            const ref = collection(db, 'artifacts', appId, 'users', window.appData.user.uid, 'schedules');
+            await addDoc(ref, sched);
+        };
+
+        window.deleteSchedule = async (id) => {
+            if (!window.appData.user) return;
+            const ref = doc(db, 'artifacts', appId, 'users', window.appData.user.uid, 'schedules', id);
+            await deleteDoc(ref);
+        };
+
+        initAuth();
+    </script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; }
+        .active-nav { background-color: #4f46e5; color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); }
+        .glass-card { background: white; border: 1px solid #e2e8f0; border-radius: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .mobile-nav-active { color: #4f46e5; transform: translateY(-4px); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="text-slate-900 overflow-x-hidden">
+
+    <div class="flex min-h-screen">
+        <!-- Sidebar Desktop -->
+        <aside class="hidden lg:flex w-64 border-r border-slate-200 bg-white flex-col p-6 sticky top-0 h-screen">
+            <div class="flex items-center gap-3 mb-10">
+                <div class="bg-indigo-600 p-2 rounded-xl text-white">
+                    <i data-lucide="graduation-cap"></i>
+                </div>
+                <h1 class="font-bold text-xl tracking-tight">EduFlow<span class="text-indigo-600">Pro</span></h1>
+            </div>
+            
+            <nav class="space-y-1">
+                <button onclick="switchTab('dashboard')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold transition-all active-nav" id="nav-dashboard">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i> Dashboard
+                </button>
+                <button onclick="switchTab('tasks')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold transition-all text-slate-500 hover:bg-slate-50" id="nav-tasks">
+                    <i data-lucide="check-circle" class="w-5 h-5"></i> Tugas
+                </button>
+                <button onclick="switchTab('schedule')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold transition-all text-slate-500 hover:bg-slate-50" id="nav-schedule">
+                    <i data-lucide="calendar" class="w-5 h-5"></i> Jadwal
+                </button>
+            </nav>
+
+            <div class="mt-auto bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Penyimpanan Cloud</p>
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span class="text-xs font-semibold text-slate-600">Tersinkronisasi</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 pb-24 lg:pb-12">
+            <!-- Header Mobile & Desktop -->
+            <header class="p-6 lg:px-12 flex justify-between items-center bg-white/80 backdrop-blur sticky top-0 z-40 border-b border-slate-100">
+                <div>
+                    <h2 id="view-title" class="text-xl font-black text-slate-800">Dashboard</h2>
+                    <p id="current-date" class="text-xs text-slate-500 font-medium"></p>
+                </div>
+                <button onclick="openAddModal()" class="bg-indigo-600 text-white p-2.5 rounded-full lg:rounded-xl lg:px-4 lg:py-2 shadow-lg shadow-indigo-200">
+                    <i data-lucide="plus" class="lg:hidden"></i>
+                    <span class="hidden lg:inline text-sm font-bold">+ Tambah Baru</span>
+                </button>
+            </header>
+
+            <div class="p-6 lg:px-12 max-w-6xl mx-auto space-y-8">
+                
+                <!-- Section: Dashboard -->
+                <div id="tab-dashboard" class="tab-pane space-y-8">
+                    <!-- Stat Cards -->
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="glass-card p-5 border-b-4 border-indigo-500">
+                            <p class="text-[10px] font-black text-slate-400 uppercase">Tugas Pending</p>
+                            <h4 id="stat-pending" class="text-2xl font-black text-slate-800">0</h4>
+                        </div>
+                        <div class="glass-card p-5 border-b-4 border-amber-500">
+                            <p class="text-[10px] font-black text-slate-400 uppercase">Kelas Hari Ini</p>
+                            <h4 id="stat-today-classes" class="text-2xl font-black text-slate-800">0</h4>
+                        </div>
+                        <div class="glass-card p-5 border-b-4 border-emerald-500">
+                            <p class="text-[10px] font-black text-slate-400 uppercase">Selesai</p>
+                            <h4 id="stat-done" class="text-2xl font-black text-slate-800">0</h4>
+                        </div>
+                        <div class="glass-card p-5 border-b-4 border-rose-500">
+                            <p class="text-[10px] font-black text-slate-400 uppercase">Fokus</p>
+                            <h4 id="stat-focus" class="text-2xl font-black text-slate-800">25m</h4>
+                        </div>
+                    </div>
+
+                    <!-- Highlight Section (Smart Logic for Tomorrow) -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div class="lg:col-span-2 space-y-6">
+                            <div class="flex items-center justify-between">
+                                <h3 id="highlight-title" class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="sparkles" class="text-amber-500 w-5 h-5"></i> Persiapan
+                                </h3>
+                                <span id="time-context" class="text-[10px] font-bold px-2 py-1 bg-slate-100 rounded-md text-slate-500"></span>
+                            </div>
+                            
+                            <div id="highlight-container" class="space-y-3">
+                                <!-- Dynamic content for today or tomorrow -->
+                            </div>
+                        </div>
+
+                        <!-- Sidebar Dashboard (Gears) -->
+                        <div class="space-y-6">
+                            <h3 class="font-bold text-lg text-slate-800">Barang Bawaan</h3>
+                            <div class="glass-card p-6 space-y-4">
+                                <div id="gear-today">
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-3">Hari Ini:</p>
+                                    <div id="gear-today-list" class="flex flex-wrap gap-2"></div>
+                                </div>
+                                <hr class="border-slate-100">
+                                <div id="gear-tomorrow" class="opacity-60">
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-3">Besok:</p>
+                                    <div id="gear-tomorrow-list" class="flex flex-wrap gap-2"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Tasks -->
+                <div id="tab-tasks" class="tab-pane hidden space-y-4">
+                    <div id="tasks-list-full" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                </div>
+
+                <!-- Section: Schedule -->
+                <div id="tab-schedule" class="tab-pane hidden space-y-6">
+                    <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" id="day-tabs"></div>
+                    <div id="schedule-list-full" class="space-y-3"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Bottom Nav Mobile -->
+        <nav class="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 px-6 py-3 flex justify-between items-center z-50 safe-bottom">
+            <button onclick="switchTab('dashboard')" class="mobile-nav-item flex flex-col items-center gap-1 text-indigo-600" id="m-nav-dashboard">
+                <i data-lucide="layout-dashboard" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">Dashboard</span>
+            </button>
+            <button onclick="switchTab('tasks')" class="mobile-nav-item flex flex-col items-center gap-1 text-slate-400" id="m-nav-tasks">
+                <i data-lucide="check-circle" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">Tugas</span>
+            </button>
+            <button onclick="switchTab('schedule')" class="mobile-nav-item flex flex-col items-center gap-1 text-slate-400" id="m-nav-schedule">
+                <i data-lucide="calendar" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">Jadwal</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Modals -->
+    <div id="modal-container" class="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div class="p-8 space-y-6">
+                <div class="flex justify-between items-center">
+                    <h3 id="modal-title" class="text-xl font-bold">Tambah Item</h3>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x"></i></button>
+                </div>
+
+                <div class="flex gap-2 p-1 bg-slate-100 rounded-2xl mb-4">
+                    <button onclick="setModalType('task')" id="m-type-task" class="flex-1 py-2 rounded-xl text-xs font-bold bg-white shadow-sm">Tugas</button>
+                    <button onclick="setModalType('schedule')" id="m-type-sched" class="flex-1 py-2 rounded-xl text-xs font-bold text-slate-500">Jadwal</button>
+                </div>
+
+                <!-- Task Form -->
+                <div id="form-task" class="space-y-4">
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Nama Tugas</label>
+                        <input id="in-task-title" type="text" placeholder="Contoh: Pr Matematika" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Tenggat Waktu</label>
+                        <input id="in-task-date" type="date" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+
+                <!-- Schedule Form -->
+                <div id="form-schedule" class="hidden space-y-4">
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Mata Pelajaran</label>
+                        <input id="in-sched-title" type="text" placeholder="Contoh: Kimia" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">Hari</label>
+                            <select id="in-sched-day" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                                <option>Senin</option><option>Selasa</option><option>Rabu</option><option>Kamis</option><option>Jumat</option><option>Sabtu</option>
+                            </select>
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">Jam</label>
+                            <input id="in-sched-time" type="time" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                        </div>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Barang Bawaan</label>
+                        <input id="in-sched-gear" type="text" placeholder="Contoh: Jas Lab, Buku Cetak" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+
+                <button id="btn-save" class="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all">Simpan Data</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTab = 'dashboard';
+        let modalType = 'task';
+        const days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+        let scheduleActiveDay = days[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
+
+        // UI Initialization
+        window.onload = () => {
+            renderAll();
+            updateTimeUI();
+            setInterval(updateTimeUI, 60000); // Update time context every minute
+            lucide.createIcons();
+        };
+
+        function updateTimeUI() {
+            const now = new Date();
+            document.getElementById('current-date').innerText = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+            
+            const hour = now.getHours();
+            const timeCtx = document.getElementById('time-context');
+            if (hour >= 18) {
+                timeCtx.innerText = "Fokus Besok (Mode Malam)";
+                timeCtx.className = "text-[10px] font-bold px-2 py-1 bg-indigo-100 rounded-md text-indigo-600";
+            } else {
+                timeCtx.innerText = "Fokus Hari Ini";
+                timeCtx.className = "text-[10px] font-bold px-2 py-1 bg-amber-100 rounded-md text-amber-600";
+            }
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`tab-${tab}`).classList.remove('hidden');
+            
+            // Sidebar Nav UI
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active-nav', 'text-slate-500'));
+            document.getElementById(`nav-${tab}`).classList.add('active-nav');
+            
+            // Mobile Nav UI
+            document.querySelectorAll('.mobile-nav-item').forEach(el => {
+                el.classList.remove('text-indigo-600');
+                el.classList.add('text-slate-400');
+            });
+            document.getElementById(`m-nav-${tab}`).classList.remove('text-slate-400');
+            document.getElementById(`m-nav-${tab}`).classList.add('text-indigo-600');
+
+            document.getElementById('view-title').innerText = tab.charAt(0).toUpperCase() + tab.slice(1);
+            renderAll();
+        }
+
+        // Modals Logic
+        function openAddModal() { document.getElementById('modal-container').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('modal-container').classList.add('hidden'); }
+        
+        function setModalType(type) {
+            modalType = type;
+            document.getElementById('form-task').classList.toggle('hidden', type !== 'task');
+            document.getElementById('form-schedule').classList.toggle('hidden', type !== 'schedule');
+            
+            document.getElementById('m-type-task').className = type === 'task' ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-white shadow-sm' : 'flex-1 py-2 rounded-xl text-xs font-bold text-slate-500';
+            document.getElementById('m-type-sched').className = type === 'schedule' ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-white shadow-sm' : 'flex-1 py-2 rounded-xl text-xs font-bold text-slate-500';
+        }
+
+        document.getElementById('btn-save').onclick = async () => {
+            if (modalType === 'task') {
+                const title = document.getElementById('in-task-title').value;
+                const date = document.getElementById('in-task-date').value;
+                if (!title || !date) return;
+                await window.addTask({ title, date, done: false, createdAt: new Date().getTime() });
+            } else {
+                const title = document.getElementById('in-sched-title').value;
+                const day = document.getElementById('in-sched-day').value;
+                const time = document.getElementById('in-sched-time').value;
+                const gear = document.getElementById('in-sched-gear').value;
+                if (!title || !time) return;
+                await window.addSchedule({ title, day, time, gear });
+            }
+            closeModal();
+            resetForms();
+        };
+
+        function resetForms() {
+            document.getElementById('in-task-title').value = '';
+            document.getElementById('in-sched-title').value = '';
+            document.getElementById('in-sched-gear').value = '';
+        }
+
+        // Rendering Logic
+        function renderAll() {
+            if (currentTab === 'dashboard') renderDashboard();
+            if (currentTab === 'tasks') renderTasks();
+            if (currentTab === 'schedule') renderSchedule();
+            updateStats();
+            lucide.createIcons();
+        }
+
+        function updateStats() {
+            const data = window.appData;
+            document.getElementById('stat-pending').innerText = data.tasks.filter(t => !t.done).length;
+            document.getElementById('stat-done').innerText = data.tasks.filter(t => t.done).length;
+            
+            const now = new Date();
+            const todayName = days[now.getDay() === 0 ? 6 : now.getDay() - 1];
+            document.getElementById('stat-today-classes').innerText = data.schedules.filter(s => s.day === todayName).length;
+        }
+
+        function renderDashboard() {
+            const now = new Date();
+            const hour = now.getHours();
+            const todayName = days[now.getDay() === 0 ? 6 : now.getDay() - 1];
+            const tomorrowName = days[now.getDay() === 7 ? 0 : now.getDay()];
+            
+            const isNight = hour >= 18;
+            const targetDay = isNight ? tomorrowName : todayName;
+            const container = document.getElementById('highlight-container');
+            
+            document.getElementById('highlight-title').innerHTML = isNight ? 
+                `<i data-lucide="moon" class="text-indigo-500 w-5 h-5"></i> Siap Untuk Besok (${targetDay})` : 
+                `<i data-lucide="sun" class="text-amber-500 w-5 h-5"></i> Jadwal Hari Ini`;
+
+            const dailySched = window.appData.schedules.filter(s => s.day === targetDay).sort((a,b) => a.time.localeCompare(b.time));
+            
+            if (dailySched.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center glass-card opacity-50"><p class="text-sm font-medium">Tidak ada jadwal untuk ${targetDay.toLowerCase()}.</p></div>`;
+            } else {
+                container.innerHTML = dailySched.map(s => `
+                    <div class="glass-card p-4 flex items-center justify-between group hover:border-indigo-300 transition-all">
+                        <div class="flex items-center gap-4">
+                            <div class="bg-indigo-50 text-indigo-600 px-3 py-2 rounded-xl font-bold text-xs">${s.time}</div>
+                            <div>
+                                <h5 class="font-bold text-sm text-slate-700">${s.title}</h5>
+                                ${s.gear ? `<p class="text-[10px] text-slate-400 flex items-center gap-1"><i data-lucide="package" class="w-3 h-3"></i> Bawa: ${s.gear}</p>` : ''}
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-all"></i>
+                    </div>
+                `).join('');
+            }
+
+            // Gear Lists Logic
+            const todayGear = window.appData.schedules.filter(s => s.day === todayName).map(s => s.gear).filter(g => g);
+            const tomorrowGear = window.appData.schedules.filter(s => s.day === tomorrowName).map(s => s.gear).filter(g => g);
+
+            document.getElementById('gear-today-list').innerHTML = todayGear.length ? todayGear.map(g => `<span class="px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold"># ${g}</span>`).join('') : '<span class="text-[10px] text-slate-400 italic">Hanya barang standar</span>';
+            document.getElementById('gear-tomorrow-list').innerHTML = tomorrowGear.length ? tomorrowGear.map(g => `<span class="px-2 py-1 bg-slate-100 text-slate-500 rounded-lg text-[10px] font-bold"># ${g}</span>`).join('') : '<span class="text-[10px] text-slate-400 italic">Hanya barang standar</span>';
+        }
+
+        function renderTasks() {
+            const list = document.getElementById('tasks-list-full');
+            const tasks = window.appData.tasks.sort((a,b) => new Date(a.date) - new Date(b.date));
+            
+            list.innerHTML = tasks.length ? tasks.map(t => `
+                <div class="glass-card p-4 flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <button onclick="toggleTask('${t.id}', ${t.done})" class="w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${t.done ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200'}">
+                            ${t.done ? '<i data-lucide="check" class="w-4 h-4"></i>' : ''}
+                        </button>
+                        <div>
+                            <h5 class="font-bold text-sm ${t.done ? 'text-slate-400 line-through' : 'text-slate-700'}">${t.title}</h5>
+                            <p class="text-[10px] text-rose-500 font-bold uppercase">${new Date(t.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</p>
+                        </div>
+                    </div>
+                    <button onclick="deleteTask('${t.id}')" class="p-2 text-slate-300 hover:text-rose-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            `).join('') : '<div class="col-span-full py-20 text-center opacity-30 font-medium">Belum ada tugas.</div>';
+        }
+
+        function renderSchedule() {
+            const tabs = document.getElementById('day-tabs');
+            tabs.innerHTML = days.map(d => `
+                <button onclick="setScheduleDay('${d}')" class="px-5 py-2 rounded-full text-xs font-bold border transition-all whitespace-nowrap ${scheduleActiveDay === d ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-500 border-slate-100'}">
+                    ${d}
+                </button>
+            `).join('');
+
+            const list = document.getElementById('schedule-list-full');
+            const scheds = window.appData.schedules.filter(s => s.day === scheduleActiveDay).sort((a,b) => a.time.localeCompare(b.time));
+            
+            list.innerHTML = scheds.length ? scheds.map(s => `
+                <div class="glass-card p-5 flex items-center justify-between">
+                    <div class="flex items-center gap-6">
+                        <div class="text-center">
+                            <p class="text-[10px] font-black text-slate-400 uppercase">Waktu</p>
+                            <p class="text-sm font-black text-indigo-600">${s.time}</p>
+                        </div>
+                        <div class="w-px h-10 bg-slate-100"></div>
+                        <div>
+                            <h5 class="font-bold text-slate-800">${s.title}</h5>
+                            <p class="text-xs text-slate-400 font-medium">${s.gear || 'Tanpa barang khusus'}</p>
+                        </div>
+                    </div>
+                    <button onclick="deleteSchedule('${s.id}')" class="p-2 text-slate-300 hover:text-rose-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            `).join('') : '<div class="py-20 text-center opacity-30 font-medium">Libur! Tidak ada jadwal.</div>';
+        }
+
+        function setScheduleDay(day) {
+            scheduleActiveDay = day;
+            renderSchedule();
+        }
+
+    </script>
+</body>
+</html>
